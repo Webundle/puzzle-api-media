@@ -1,0 +1,54 @@
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        # automatically injects dependencies in your services
+        autowire: true
+        # automatically registers your services as commands, event subscribers, etc.
+        autoconfigure: true
+        # this means you cannot fetch services directly from the container via $container->get()
+        # if you need to do this, you can override this setting on individual services
+        public: false
+        bind:
+            $maxSize: '%puzzle_api_media.max_size%'
+        
+    # Default Services
+    Puzzle\Api\MediaBundle\:
+        resource: '../../../MediaBundle/*'
+        public: true
+        exclude: '../../../MediaBundle/{Entity,Repository,Tests,Form,Twig,Event,EventListener}'
+    
+    # Controller
+    Puzzle\Api\MediaBundle\Controller\:
+        resource: '../../../MediaBundle/Controller'
+        public: true
+        tags: ['controller.service_arguments']
+    
+    # Service Manager
+    papis.media_manager:
+        class: Puzzle\Api\MediaBundle\Service\MediaManager
+        arguments:
+            $em: '@doctrine.orm.entity_manager'
+            $errorFactory: '@papis.error_factory'
+    
+    papis.media_uploader:
+        class: Puzzle\Api\MediaBundle\Service\MediaUploader
+        arguments:
+            $em: '@doctrine.orm.entity_manager'
+            $mediaManager: '@papis.media_manager'
+            $maxSize: '%puzzle_api_media.max_size%'
+    
+    # Listeners
+    papis.event_listener.media:
+        class:  Puzzle\Api\MediaBundle\Listener\MediaListener
+        arguments: [ '@doctrine.orm.entity_manager', '@papis.media_manager', '@papis.media_uploader' ]
+        tags:
+            - { name: kernel.event_listener, event: papis.media.create_folder, method: onCreateFolder }
+            - { name: kernel.event_listener, event: papis.media.rename_folder, method: onRenameFolder }
+            - { name: kernel.event_listener, event: papis.media.remove_folder, method: onRemoveFolder }
+            - { name: kernel.event_listener, event: papis.media.add_files_to_folder, method: onAddFilesToFolder }
+            - { name: kernel.event_listener, event: papis.media.remove_files_to_folder, method: onRemoveFilesToFolder }
+            - { name: kernel.event_listener, event: papis.media.create_file, method: onCreateFile }
+            - { name: kernel.event_listener, event: papis.media.copy_file, method: onCopyFile }
+            - { name: kernel.event_listener, event: papis.media.rename_file, method: onRenameFile }
+            - { name: kernel.event_listener, event: papis.media.remove_file, method: onRemoveFile }
+    

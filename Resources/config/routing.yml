@@ -1,0 +1,8 @@
+file:
+    type: rest
+    resource: Puzzle\Api\MediaBundle\Controller\FileController
+
+folder:
+    type: rest
+    resource: Puzzle\Api\MediaBundle\Controller\FolderController
+    
