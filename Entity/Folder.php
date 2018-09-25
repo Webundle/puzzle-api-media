@@ -131,11 +131,6 @@ class Folder
         return [ 'name' ];
     }
     
-    public function generateSlugValue($values)
-    {
-        return implode('-', $values);
-    }
-    
     public function setFiles($files) : self {
         foreach ($files as $file) {
             $this->addFile($file);
