@@ -1,4 +1,22 @@
 services:
+    services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+        public: false
+        
+    # Service
+    Puzzle\Api\MediaBundle\:
+        resource: '%kernel.project_dir%/vendor/webundle/puzzle-api-media/*'
+        exclude: '%kernel.project_dir%/vendor/webundle/puzzle-api-media/{Entity,Repository,Tests}'
+    
+    # Controller
+    Puzzle\Api\MediaBundle\Controller\:
+        resource: '%kernel.project_dir%/vendor/webundle/puzzle-api-media/Controller'
+        public: true
+        tags: ['controller.service_arguments']
+    
+        
     # Service Manager
     papis.media_manager:
         class: Puzzle\Api\MediaBundle\Service\MediaManager
