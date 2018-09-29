@@ -12,6 +12,7 @@ use function GuzzleHttp\Psr7\mimetype_from_extension;
 use Puzzle\OAuthServerBundle\Traits\PrimaryKeyable;
 use Knp\DoctrineBehaviors\Model\Timestampable\Timestampable;
 use Knp\DoctrineBehaviors\Model\Blameable\Blameable;
+use Doctrine\Common\Collections\Collection;
 
 /**
  * File
@@ -103,8 +104,17 @@ class File
      */
     private $document;
     
+    /**
+     * @ORM\ManyToMany(targetEntity="Folder", inversedBy="files")
+     * @ORM\JoinTable(name="file_folders",
+     *      joinColumns={@ORM\JoinColumn(name="file_id", referencedColumnName="id")},
+     *      inverseJoinColumns={@ORM\JoinColumn(name="folder_id", referencedColumnName="id")}
+     * )
+     */
+    private $folders;
     
     public function __construct(array $properties = null) {
+        $this->folders = new \Doctrine\Common\Collections\ArrayCollection();
         if (isset($properties['name']) === true) {
             $this->name = $properties['name'];
         }
@@ -226,6 +236,35 @@ class File
 
     public function getDocument() :? Document {
         return $this->document;
+    }
+    
+    
+    public function setFolders (Collection $folders) : self {
+        foreach ($folders as $folder) {
+            $this->addFolder($folder);
+        }
+        
+        return $this;
+    }
+    
+    public function addFolder(Folder $folder) :self {
+        if ($this->folders->count() === 0 || $this->folders->contains($folder) === false) {
+            $this->folders->add($folder);
+        }
+        
+        return $this;
+    }
+    
+    public function removeFolder(Folder $folder) :self {
+        if ($this->folders->contains($folder) === true) {
+            $this->folders->removeElement($folder);
+        }
+        
+        return $this;
+    }
+    
+    public function getFolders() :?Collection {
+        return $this->folders;
     }
     
     public function isPicture() {

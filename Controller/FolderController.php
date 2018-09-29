@@ -2,20 +2,14 @@
 
 namespace Puzzle\Api\MediaBundle\Controller;
 
-use JMS\Serializer\SerializerInterface;
 use Puzzle\Api\MediaBundle\PuzzleApiMediaEvents;
 use Puzzle\Api\MediaBundle\Entity\Folder;
 use Puzzle\Api\MediaBundle\Event\FolderEvent;
-use Puzzle\Api\MediaBundle\Service\MediaManager;
-use Puzzle\Api\MediaBundle\Service\MediaUploader;
 use Puzzle\OAuthServerBundle\Controller\BaseFOSRestController;
-use Puzzle\OAuthServerBundle\Service\ErrorFactory;
-use Puzzle\OAuthServerBundle\Service\Repository;
 use Puzzle\OAuthServerBundle\Service\Utils;
 use Puzzle\OAuthServerBundle\Util\FormatUtil;
-use Symfony\Bridge\Doctrine\RegistryInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
+use Puzzle\Api\MediaBundle\Entity\File;
 
 /**
  * 
@@ -24,39 +18,9 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class FolderController extends BaseFOSRestController
 {
-    /**
-     * @var MediaManager
-     */
-    protected $mediaManager;
-    
-    /**
-     * @var MediaUploader
-     */
-    protected $mediaUploader;
-    
-    /**
-     * @param RegistryInterface         $doctrine
-     * @param Repository                $repository
-     * @param SerializerInterface       $serializer
-     * @param EventDispatcherInterface  $dispatcher
-     * @param ErrorFactory              $errorFactory
-     * @param MediaManager              $mediaManager
-     * @param MediaUploader             $mediaUploader
-     */
-    public function __construct(
-        RegistryInterface $doctrine,
-        Repository $repository,
-        SerializerInterface $serializer,
-        ErrorFactory $errorFactory,
-        EventDispatcherInterface $dispatcher,
-        MediaManager $mediaManager,
-        MediaUploader $mediaUploader
-    ){
-        $this->mediaManager = $mediaManager;
-        $this->mediaUploader = $mediaUploader;
+    public function __construct() {
+        parent::__construct();
         $this->fields = ['name', 'description', 'overwritable', 'allowedExtensions', 'parent'];
-        
-        parent::__construct($doctrine, $repository, $serializer, $dispatcher, $errorFactory);
     }
     
 	/**
@@ -65,7 +29,10 @@ class FolderController extends BaseFOSRestController
 	 */
 	public function getMediaFoldersAction(Request $request) {
 	    $query = Utils::blameRequestQuery($request->query, $this->getUser());
-	    $response = $this->repository->filter($query, Folder::class, $this->connection);
+	    
+	    /** @var Puzzle\OAuthServerBundle\Service\Repository $repository */
+	    $repository = $this->get('papis.repository');
+	    $response = $repository->filter($query, Folder::class, $this->connection);
 	    
 	    return $this->handleView(FormatUtil::formatView($request, $response));
 	}
@@ -77,10 +44,12 @@ class FolderController extends BaseFOSRestController
 	 */
 	public function getMediaFolderAction(Request $request, Folder $folder) {
 	    if ($folder->getCreatedBy()->getId() !== $this->getUser()->getId()) {
-	        return $this->handleView($this->errorFactory->accessDenied($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->accessDenied($request));
 	    }
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['resources' => $folder]));
+	    return $this->handleView(FormatUtil::formatView($request, $folder));
 	}
 	
 	/**
@@ -89,7 +58,7 @@ class FolderController extends BaseFOSRestController
 	 */
 	public function postMediaFolderAction(Request $request) {
 	    /** @var Doctrine\ORM\EntityManager $em */
-	    $em = $this->doctrine->getManager($this->connection);
+	    $em = $this->get('doctrine')->getManager($this->connection);
 	    
 	    $data = $request->request->all();
 	    $user = $this->getUser();
@@ -111,7 +80,7 @@ class FolderController extends BaseFOSRestController
 	            $em->persist($parent);
 	            $em->flush($parent);
 	            
-	            $parent = $this->mediaManager->createFolder($parent, $user);
+	            $parent = $this->get('papis.media_manager')->createFolder($parent, $user);
 	        }
 	        
 	        $parentId = $parent->getId();
@@ -121,17 +90,20 @@ class FolderController extends BaseFOSRestController
 	    
 	    $data['parent'] = $parent;
 	    $data['overwritable'] = true;
-	    /** @var Folder $folder */
+	    
+	    /** @var Puzzle\Api\MediaBundle\Entity\Folder $folder */
 	    $folder = Utils::setter(new Folder(), $this->fields, $data);
 	    
 	    $em->persist($folder);
 	    $em->flush();
 	    
-	    $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_CREATE_FOLDER, new FolderEvent($folder, [
+	    /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+	    $dispatcher = $this->get('event_dispatcher');
+	    $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_CREATE_FOLDER, new FolderEvent($folder, [
 	        'user' => $this->getUser()
 	    ]));
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['resources' => $folder]));
+	    return $this->handleView(FormatUtil::formatView($request, $folder));
 	}
 	
 	
@@ -144,29 +116,32 @@ class FolderController extends BaseFOSRestController
 	    $user = $this->getUser();
 	    
 	    if ($folder->getCreatedBy()->getId() !== $user->getId()) {
-	        return $this->handleView($this->errorFactory->badRequest($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->badRequest($request));
 	    }
 	    
 	    /** @var Doctrine\ORM\EntityManager $em */
-	    $em = $this->doctrine->getManager($this->connection);
+	    $em = $this->get('doctrine')->getManager($this->connection);
 	    
 	    $data = $request->request->all();
 	    $data['parent'] = isset($data['parent']) && $data['parent'] ? $em->getRepository(Folder::class)->find($data['parent']) : null;
 	    $oldAbsolutePath = isset($data['name']) && $data['name'] !== null ? $folder->getAbsolutePath() : null;
 	    
-	    /** @var Folder $folder */
+	    /** @var Puzzle\Api\MediaBundle\Entity\Folder $folder */
 	    $folder = Utils::setter($folder, $this->fields, $data);
 	    
-	    $em = $this->doctrine->getManager($this->connection);
-	    $em->flush();
-	    
-	    if ($oldAbsolutePath !== $folder->getAbsolutePath()){
-	        $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_RENAME_FOLDER, new FolderEvent($folder, [
+	    if ($oldAbsolutePath !== $folder->getAbsolutePath()) {
+	        /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+	        $dispatcher = $this->get('event_dispatcher');
+	        $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_RENAME_FOLDER, new FolderEvent($folder, [
 	            'oldAbsolutePath' => $oldAbsolutePath
 	        ]));
 	    }
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));
+	    $em->flush();
+	    
+	    return $this->handleView(FormatUtil::formatView($request, $folder));
 	}
 	
 	/**
@@ -178,18 +153,22 @@ class FolderController extends BaseFOSRestController
 	    $user = $this->getUser();
 	    
 	    if ($folder->getCreatedBy()->getId() !== $user->getId()) {
-	        return $this->handleView($this->errorFactory->badRequest($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->badRequest($request));
 	    }
 	    
 	    $data = $request->request->all();
-	    if (isset($data['files_to_add']) && count($data['files_to_add']) > 0) {
-	        $filesToAdd = $data['files_to_add'];
-	        foreach ($filesToAdd as $file) {
+	    $filesToAdd = $data['files_to_add'] ? explode(',', $data['files_to_add']) : null;
+	    if ($filesToAdd !== null) {
+	        /** @var Doctrine\ORM\EntityManager $em */
+	        $em = $this->get('doctrine')->getManager($this->connection);
+	        
+	        foreach ($filesToAdd as $fileId) {
+	            $file = $em->getRepository(File::class)->find($fileId);
 	            $folder->addFile($file);
 	        }
 	        
-	        /** @var Doctrine\ORM\EntityManager $em */
-	        $em = $this->doctrine->getManager($this->connection);
 	        $em->flush();
 	        
 	        $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_ADD_FILES_TO_FOLDER, new FolderEvent($folder, [
@@ -197,10 +176,10 @@ class FolderController extends BaseFOSRestController
 	            'user'          => $user
 	        ]));
 	        
-	        return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));
+	        return $this->handleView(FormatUtil::formatView($request, $folder));
 	    }
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['code' => 304]));
+	    return $this->handleView(FormatUtil::formatView($request, null, 204));
 	}
 	
 	
@@ -213,29 +192,35 @@ class FolderController extends BaseFOSRestController
 	    $user = $this->getUser();
 	    
 	    if ($folder->getCreatedBy()->getId() !== $user->getId()) {
-	        return $this->handleView($this->errorFactory->badRequest($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->badRequest($request));
 	    }
 	    
 	    $data = $request->request->all();
-	    if (isset($data['files_to_remove']) && count($data['files_to_remove']) > 0) {
-	        $filesToRemove = $data['files_to_remove'];
-	        foreach ($filesToRemove as $file) {
+	    $filesToRemove = $data['files_to_remove'] ? explode(',', $data['files_to_remove']) : null;
+	    if ($filesToRemove !== null) {
+	        /** @var Doctrine\ORM\EntityManager $em */
+	        $em = $this->get('doctrine')->getManager($this->connection);
+	        
+	        foreach ($filesToRemove as $fileId) {
+	            $file = $em->getRepository(File::class)->find($fileId);
 	            $folder->removeFile($file);
 	        }
 	        
-	        /** @var Doctrine\ORM\EntityManager $em */
-	        $em = $this->doctrine->getManager($this->connection);
 	        $em->flush();
 	        
-	        $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FILES_TO_FOLDER, new FolderEvent($folder, [
+	        /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+	        $dispatcher = $this->get('event_dispatcher');
+	        $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FILES_TO_FOLDER, new FolderEvent($folder, [
 	            'files_to_remove'  => $filesToRemove,
 	            'user'             => $user
 	        ]));
 	        
-	        return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));
+	        return $this->handleView(FormatUtil::formatView($request, $folder));
 	    }
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['code' => 304]));
+	    return $this->handleView(FormatUtil::formatView($request, null, 204));
 	}
 	
 	
@@ -246,16 +231,20 @@ class FolderController extends BaseFOSRestController
 	 */
 	public function deleteMediaFolderAction(Request $request, Folder $folder) {
 	    if ($folder->getCreatedBy()->getId() !== $this->getUser()->getId()) {
-	        return $this->handleView($this->errorFactory->badRequest($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->badRequest($request));
 	    }
 	    
-	    $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FOLDER, new FolderEvent($folder));
+	    /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+	    $dispatcher = $this->get('event_dispatcher');
+	    $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FOLDER, new FolderEvent($folder));
 	    
 	    /** @var Doctrine\ORM\EntityManager $em */
-	    $em = $this->doctrine->getManager($this->connection);
+	    $em = $this->get('doctrine')->getManager($this->connection);
 	    $em->remove($folder);
 	    $em->flush();
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));
+	    return $this->handleView(FormatUtil::formatView($request, null, 204));
 	}
 }

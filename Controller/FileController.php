@@ -2,20 +2,13 @@
 
 namespace Puzzle\Api\MediaBundle\Controller;
 
-use JMS\Serializer\SerializerInterface;
 use Puzzle\Api\MediaBundle\PuzzleApiMediaEvents;
 use Puzzle\Api\MediaBundle\Entity\File;
 use Puzzle\Api\MediaBundle\Entity\Folder;
 use Puzzle\Api\MediaBundle\Event\FileEvent;
-use Puzzle\Api\MediaBundle\Service\MediaManager;
-use Puzzle\Api\MediaBundle\Service\MediaUploader;
 use Puzzle\OAuthServerBundle\Controller\BaseFOSRestController;
-use Puzzle\OAuthServerBundle\Service\ErrorFactory;
-use Puzzle\OAuthServerBundle\Service\Repository;
 use Puzzle\OAuthServerBundle\Service\Utils;
 use Puzzle\OAuthServerBundle\Util\FormatUtil;
-use Symfony\Bridge\Doctrine\RegistryInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
@@ -25,39 +18,9 @@ use Symfony\Component\HttpFoundation\Request;
  */
 class FileController extends BaseFOSRestController
 {
-    /**
-     * @var MediaManager
-     */
-    protected $mediaManager;
-    
-    /**
-     * @var MediaUploader
-     */
-    protected $mediaUploader;
-    
-    /**
-     * @param RegistryInterface         $doctrine
-     * @param Repository                $repository
-     * @param SerializerInterface       $serializer
-     * @param EventDispatcherInterface  $dispatcher
-     * @param ErrorFactory              $errorFactory
-     * @param MediaManager              $mediaManager
-     * @param MediaUploader             $mediaUploader
-     */
-    public function __construct(
-        RegistryInterface $doctrine,
-        Repository $repository,
-        SerializerInterface $serializer,
-        ErrorFactory $errorFactory,
-        EventDispatcherInterface $dispatcher,
-        MediaManager $mediaManager,
-        MediaUploader $mediaUploader
-    ){
-        $this->mediaManager = $mediaManager;
-        $this->mediaUploader = $mediaUploader;
+    public function __construct() {
+        parent::__construct();
         $this->fields = ['name', 'caption', 'path', 'size', 'extension'];
-        
-        parent::__construct($doctrine, $repository, $serializer, $dispatcher, $errorFactory);
     }
     
 	/**
@@ -66,7 +29,10 @@ class FileController extends BaseFOSRestController
 	 */
 	public function getMediaFilesAction(Request $request) {
 	    $query = Utils::blameRequestQuery($request->query, $this->getUser());
-	    $response = $this->repository->filter($query, File::class, $this->connection);
+	    
+	    /** @var Puzzle\OAuthServerBundle\Service\Repository $repository */
+	    $repository = $this->get('papis.repository');
+	    $response = $repository->filter($query, File::class, $this->connection);
 	    
 	    return $this->handleView(FormatUtil::formatView($request, $response));
 	}
@@ -78,10 +44,12 @@ class FileController extends BaseFOSRestController
 	 */
 	public function getMediaFileAction(Request $request, File $file) {
 	    if ($file->getCreatedBy()->getId() !== $this->getUser()->getId()) {
-	        return $this->handleView($this->errorFactory->accessDenied($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->accessDenied($request));
 	    }
 	    
-	    return $this->handleView(FormatUtil::formatView($request, ['resources' => $file]));
+	    return $this->handleView(FormatUtil::formatView($request, $file));
 	}
 	
 	/**
@@ -90,7 +58,7 @@ class FileController extends BaseFOSRestController
 	 */
 	public function postMediaFileAction(Request $request) {
 	    /** @var Doctrine\ORM\EntityManager $em */
-	    $em = $this->doctrine->getManager($this->connection);
+	    $em = $this->get('doctrine')->getManager($this->connection);
 	    
 	    $data = $request->request->all();
 	    $user = $this->getUser();
@@ -111,26 +79,26 @@ class FileController extends BaseFOSRestController
 	            $em->persist($folder);
 	            $em->flush($folder);
 	            
-	            $folder = $this->mediaManager->createFolder($folder, $user);
+	            $folder = $this->get('papis.media_manager')->createFolder($folder, $user);
 	        }
 	        
 	        $folderId = $folder->getId();
 	    }
 	    
-	    $dataUploadFromUrl = $this->mediaUploader->uploadFromUrl($data['url'], $folderId);
+	    $dataUploadFromUrl = $this->get('papis.media_uploader')->uploadFromUrl($data['url'], $folderId);
 		$data = array_merge($data, $dataUploadFromUrl);
 		
-		/** @var File $file */
+		/** @var Puzzle\Api\MediaBundle\Entity\File $file */
 		$file = Utils::setter(new File(), $this->fields, $data);
 		$em->persist($file);
 		
 		/* Classify file */
 		$folder = $em->getRepository(Folder::class)->find($folderId);
-		$folder->addFile($file->getId());
+		$folder->addFile($file);
 		
 		$em->flush();
 		
-		return $this->handleView(FormatUtil::formatView($request, ['resources' => $file]));
+		return $this->handleView(FormatUtil::formatView($request, $file));
 	}
 	
 	/**
@@ -140,7 +108,9 @@ class FileController extends BaseFOSRestController
 	 */
 	public function putMediaFileAction(Request $request, File $file) {
 	    if ($file->getCreatedBy()->getId() !== $this->getUser()->getId()) {
-	        return $this->handleView($this->errorFactory->badRequest($request));
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
+	        return $this->handleView($errorFactory->badRequest($request));
 	    }
 	    
 	    $data = $request->request->all();
@@ -156,17 +126,19 @@ class FileController extends BaseFOSRestController
 	    }
 	    
 	    /** @var Doctrine\ORM\EntityManager $em */
-		$em = $this->doctrine->getManager($this->connection);
+		$em = $this->get('doctrine')->getManager($this->connection);
 		$em->flush();
 		
 		if ($oldAbsolutePath !== $file->getAbsolutePath()) {
-		    $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_RENAME_FILE, new FileEvent([
+		    /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+		    $dispatcher = $this->get('event_dispatcher');
+		    $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_RENAME_FILE, new FileEvent([
 		        'oldAbsolutePath' => $oldAbsolutePath,
 		        'absolutePath' => $file->getAbsolutePath()
 		    ]));
 		}
 		
-		return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));	
+		return $this->handleView(FormatUtil::formatView($request, $file));	
 	}
 	
 	/**
@@ -176,18 +148,22 @@ class FileController extends BaseFOSRestController
 	 */
 	public function deleteMediaFileAction(Request $request, File $file) {
 	    if ($file->getCreatedBy()->getId() !== $this->getUser()->getId()) {
+	        /** @var Puzzle\OAuthServerBundle\Service\ErrorFactory $errorFactory */
+	        $errorFactory = $this->get('papis.error_factory');
 	        return $this->handleView($this->errorFactory->badRequest($request));
 	    }
 	    
-	    $this->dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FILE, new FileEvent([
+	    /** @var Symfony\Component\EventDispatcher\EventDispatcher $dispatcher */
+	    $dispatcher = $this->get('event_dispatcher');
+	    $dispatcher->dispatch(PuzzleApiMediaEvents::MEDIA_REMOVE_FILE, new FileEvent([
 	        'absolutePath' => $file->getAbsolutePath()
 	    ]));
 	    
 	    /** @var Doctrine\ORM\EntityManager $em */
-		$em = $this->doctrine->getManager($this->connection);
+		$em = $this->get('doctrine')->getManager($this->connection);
 		$em->remove($file);
 		$em->flush();
 		
-		return $this->handleView(FormatUtil::formatView($request, ['code' => 200]));
+		return $this->handleView(FormatUtil::formatView($request, null, 204));
 	}
 }

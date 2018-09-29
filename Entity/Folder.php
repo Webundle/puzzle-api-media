@@ -51,12 +51,9 @@ use Puzzle\OAuthServerBundle\Traits\Taggable;
  *     exclusion = @Hateoas\Exclusion(excludeIf = "expr(object.getChilds() === null)")
  * ))
  * @Hateoas\Relation(
- * 		name = "files", 
- *      exclusion = @Hateoas\Exclusion(excludeIf = "expr(object.getFiles() === null)"),
- * 		href = @Hateoas\Route(
- * 			"get_media_files", 
- * 			parameters = {"id" = "=:~expr(object.stringify(',',object.getFiles()))"},
- * 			absolute = true,
+ * 		name = "files",
+ *      embedded = "expr(object.getFiles())", 
+ *      exclusion = @Hateoas\Exclusion(excludeIf = "expr(object.getFiles() === null)")
  * ))
  * 
  */
@@ -104,14 +101,6 @@ class Folder
     private $allowedExtensions;
 
     /**
-     * @ORM\Column(name="files", type="array", nullable=true)
-     * @var array
-     * @JMS\Expose
-  	 * @JMS\Type("array")
-     */
-    private $files;
-    
-    /**
      * @ORM\OneToMany(targetEntity="Folder", mappedBy="parent", cascade={"remove"})
      */
     private $childs;
@@ -122,8 +111,14 @@ class Folder
      */
     private $parent;
     
+    /**
+     * @ORM\ManyToMany(targetEntity="File", mappedBy="folders")
+     */
+    private $files;
+    
     public function __construct() {
         $this->childs = new \Doctrine\Common\Collections\ArrayCollection();
+        $this->files = new \Doctrine\Common\Collections\ArrayCollection();
     }
 
     public function getSluggableFields()
@@ -131,28 +126,32 @@ class Folder
         return [ 'name' ];
     }
     
-    public function setFiles($files) : self {
+    public function setFiles (Collection $files) : self {
         foreach ($files as $file) {
             $this->addFile($file);
         }
         
-    	return $this;
+        return $this;
     }
     
-    public function addFile($file) : self {
-    	$this->files[] = $file;
-    	$this->files = array_unique($this->files);
-    	
-    	return $this;
+    public function addFile(File $file) :self {
+        if ($this->files->count() === 0 || $this->files->contains($file) === false) {
+            $this->files->add($file);
+        }
+        
+        return $this;
     }
     
-    public function removeFile($file) : self {
-    	$this->files = array_diff($this->files, [$file]);
-    	return $this;
+    public function removeFile(File $file) :self {
+        if ($this->files->contains($file) === true) {
+            $this->files->removeElement($file);
+        }
+        
+        return $this;
     }
     
-    public function getFiles() :? array {
-    	return $this->files;
+    public function getFiles() :?Collection {
+        return $this->files;
     }
 
     public function setOverwritable($overwritable) : self {
